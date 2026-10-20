@@ -401,7 +401,273 @@ async function sendDigest({
     }
 }
 
+async function logDigestPreview() {
+    const { rows } = await pool.query(
+        `
+            WITH eligible_recipients AS (
+                SELECT
+                    c.id AS chamber_record_id,
+                    c.name,
+                    c.company_name,
+                    c.email,
+                    c.city,
+                    c.lead_industries
 
+                FROM chamber_of_commerce c
+
+                WHERE
+                    NULLIF(
+                        BTRIM(c.email),
+                        ''
+                    ) IS NOT NULL
+
+                    AND CARDINALITY(
+                        COALESCE(
+                            c.lead_industries,
+                            ARRAY[]::text[]
+                        )
+                    ) > 0
+
+                    AND NOT EXISTS (
+                        SELECT 1
+
+                        FROM chamber_email_unsubscribes u
+
+                        WHERE
+                            LOWER(BTRIM(u.email)) =
+                            LOWER(BTRIM(c.email))
+
+                            AND u.unsubscribed_at IS NOT NULL
+                    )
+
+                    AND NOT EXISTS (
+                        SELECT 1
+
+                        FROM chamber_lead_email_log log
+
+                        WHERE
+                            LOWER(BTRIM(log.recipient_email)) =
+                            LOWER(BTRIM(c.email))
+
+                            AND log.status IN (
+                                'pending',
+                                'sent'
+                            )
+
+                            AND log.sent_at >=
+                                NOW() -
+                                (
+                                    $1::int *
+                                    INTERVAL '1 hour'
+                                )
+                    )
+
+                    AND (
+                        $3::int[] IS NULL
+
+                        OR CARDINALITY($3::int[]) = 0
+
+                        OR c.id = ANY($3::int[])
+                    )
+            ),
+
+            recipient_industries AS (
+                SELECT
+                    er.chamber_record_id,
+                    er.name,
+                    er.company_name,
+                    er.email,
+                    er.city,
+
+                    regexp_replace(
+                        LOWER(BTRIM(industry_value)),
+                        '[[:space:]-]+',
+                        '_',
+                        'g'
+                    ) AS industry,
+
+                    industry_order
+
+                FROM eligible_recipients er
+
+                CROSS JOIN LATERAL
+                    unnest(er.lead_industries)
+                    WITH ORDINALITY AS industries(
+                        industry_value,
+                        industry_order
+                    )
+
+                WHERE NULLIF(
+                    BTRIM(industry_value),
+                    ''
+                ) IS NOT NULL
+            ),
+
+            industries_with_batches AS (
+                SELECT
+                    ri.chamber_record_id,
+                    ri.name,
+                    ri.company_name,
+                    ri.email,
+                    ri.city,
+                    ri.industry,
+                    ri.industry_order,
+
+                    batch.lead_count,
+                    batch.lead_ids
+
+                FROM recipient_industries ri
+
+                JOIN LATERAL (
+                    SELECT
+                        COUNT(*)::int AS lead_count,
+
+                        ARRAY_AGG(
+                            candidate.id
+                            ORDER BY
+                                candidate.scraped_at DESC,
+                                candidate.id DESC
+                        ) AS lead_ids
+
+                    FROM (
+                        SELECT
+                            f.id,
+                            f.scraped_at
+
+                        FROM familytreenow f
+
+                        WHERE
+                            ri.industry = ANY(
+                                string_to_array(
+                                    TRIM(
+                                        BOTH '{}'
+                                        FROM LOWER(
+                                            REPLACE(
+                                                COALESCE(
+                                                    f.lead_type,
+                                                    ''
+                                                ),
+                                                ' ',
+                                                ''
+                                            )
+                                        )
+                                    ),
+                                    ','
+                                )
+                            )
+
+                            AND NULLIF(
+                                BTRIM(f.description),
+                                ''
+                            ) IS NOT NULL
+
+                            AND (
+                                $2::int <= 0
+
+                                OR f.scraped_at >=
+                                    NOW() -
+                                    (
+                                        $2::int *
+                                        INTERVAL '1 day'
+                                    )
+                            )
+
+                            AND NOT EXISTS (
+                                SELECT 1
+
+                                FROM chamber_lead_email_log log
+
+                                WHERE
+                                    log.lead_id = f.id
+
+                                    AND LOWER(
+                                        BTRIM(log.recipient_email)
+                                    ) =
+                                    LOWER(
+                                        BTRIM(ri.email)
+                                    )
+                            )
+
+                        ORDER BY
+                            f.scraped_at DESC,
+                            f.id DESC
+
+                        LIMIT 10
+                    ) candidate
+
+                ) batch
+                    ON batch.lead_count >= 10
+            ),
+
+            ranked AS (
+                SELECT
+                    *,
+
+                    ROW_NUMBER() OVER (
+                        PARTITION BY chamber_record_id
+                        ORDER BY industry_order ASC
+                    ) AS recipient_rank
+
+                FROM industries_with_batches
+            )
+
+            SELECT
+                chamber_record_id,
+                name,
+                company_name,
+                email,
+                city,
+                industry,
+                lead_count,
+                lead_ids
+
+            FROM ranked
+
+            WHERE recipient_rank = 1
+
+            ORDER BY chamber_record_id ASC;
+        `,
+        [
+            CHAMBER_DIGEST_COOLDOWN_HOURS,
+            MAX_AGE_DAYS,
+            allowedChamberIds
+        ]
+    );
+
+    console.log(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    );
+
+    console.log(
+        `[chamber-digest] PREVIEW: ` +
+        `${rows.length} email(s) are currently eligible to send.`
+    );
+
+    if (!rows.length) {
+        console.log(
+            "[chamber-digest] PREVIEW: No recipients currently have " +
+            "a complete 10-lead batch."
+        );
+    }
+
+    for (const row of rows) {
+        console.log(
+            `[chamber-digest] PREVIEW SEND → ` +
+            `${row.company_name || row.name} ` +
+            `(Chamber ID ${row.chamber_record_id}) | ` +
+            `${row.email} | ` +
+            `industry=${row.industry} | ` +
+            `leads=${row.lead_count} | ` +
+            `lead_ids=${row.lead_ids.join(",")}`
+        );
+    }
+
+    console.log(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    );
+
+    return rows;
+}
 /* --------------------------------------------------------------------------
  * Main
  * ----------------------------------------------------------------------- */
@@ -410,6 +676,8 @@ async function main() {
     console.log(
         "[chamber-digest] Starting...",
     );
+
+    await logDigestPreview();
 
     /*
      * Deploy safely before turning outbound email on.
