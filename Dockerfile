@@ -11,6 +11,7 @@ RUN npm install \
     --no-audit \
     --no-fund
 
+COPY chamber_directory_ingest.js ./
 COPY chamber_classify.js ./
 COPY chamber_lead_digest.js ./
 COPY lead_types.js ./
