@@ -487,12 +487,11 @@ async function callSonar(rows) {
         rows.map((row) => ({
             id: row.id,
             name: row.name,
-            company_name:
-            row.company_name,
-            industry_guess:
-            row.industry_guess,
-            city:
-            row.city,
+            company_name: row.company_name,
+            phone: row.phone,
+            email: row.email,
+            industry_guess: row.industry_guess,
+            city: row.city,
         }));
 
     const response =
