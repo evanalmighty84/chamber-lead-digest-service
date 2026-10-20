@@ -149,3 +149,46 @@ Chamber Cron -> chamber classification + daily digest
 ```
 
 The Chamber service should not be chained from `ftn-trigger-server.js`.
+
+## Local Chamber directory ingestion
+
+The same Railway service can optionally refresh `chamber_of_commerce` from
+public local Chamber directories before classification runs.
+
+Current sources:
+
+- Allen Chamber community guide
+- McKinney Chamber active member directory
+- Frisco Chamber business directory
+- Coppell Chamber member directory
+
+The daily order becomes:
+
+```text
+chamber_directory_ingest.js
+        ↓
+chamber_classify.js
+        ↓
+chamber_lead_digest.js
+```
+
+The ingestion stage is intentionally disabled by default:
+
+```text
+CHAMBER_RUN_INGEST_FIRST=0
+CHAMBER_INGEST_DRY_RUN=1
+```
+
+For the first test, turn on the stage but leave dry-run enabled:
+
+```text
+CHAMBER_RUN_INGEST_FIRST=1
+CHAMBER_INGEST_DRY_RUN=1
+CHAMBER_INGEST_SOURCES=allen,mckinney,frisco,coppell
+CHAMBER_INGEST_MAX_INSERTS_PER_SOURCE=10
+```
+
+The script deduplicates against the existing table by email, normalized phone,
+or company name + city. It never automatically replaces a non-empty existing
+email, so manual corrections in `chamber_of_commerce` remain protected.
+
