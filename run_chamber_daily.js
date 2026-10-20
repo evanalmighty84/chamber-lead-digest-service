@@ -102,6 +102,27 @@ async function main() {
 
     const results = [];
 
+    /*
+     * Optional Chamber directory ingestion stage.
+     *
+     * Default is OFF so merging this code cannot unexpectedly crawl public
+     * directories or change the database. Turn it on in Railway only after
+     * reviewing a CHAMBER_INGEST_DRY_RUN=1 execution.
+     */
+    if (envFlag("CHAMBER_RUN_INGEST_FIRST", false)) {
+        results.push(
+            await runScript(
+                "chamber_directory_ingest.js",
+                "Chamber directory ingestion",
+            ),
+        );
+    } else {
+        console.log(
+            "[chamber-runner] CHAMBER_RUN_INGEST_FIRST is off; " +
+            "skipping directory ingestion.",
+        );
+    }
+
     if (envFlag("CHAMBER_RUN_CLASSIFY_FIRST", true)) {
         results.push(
             await runScript(
