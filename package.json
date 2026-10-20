@@ -1,0 +1,21 @@
+{
+  "name": "clubhouse-links-chamber-lead-digest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Railway cron service for Chamber business classification and lead digests.",
+  "main": "run_chamber_daily.js",
+  "scripts": {
+    "start": "node run_chamber_daily.js",
+    "daily": "node run_chamber_daily.js",
+    "classify": "node chamber_classify.js",
+    "digest": "node chamber_lead_digest.js",
+    "check": "node --check chamber_classify.js && node --check chamber_lead_digest.js && node --check run_chamber_daily.js && node --check lead_types.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "pg": "^8.13.0"
+  }
+}
