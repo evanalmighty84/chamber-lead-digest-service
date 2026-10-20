@@ -667,6 +667,20 @@ function externalWebsiteFromPage($, pageUrl) {
 
             const url = new URL(resolved);
 
+            /*
+             * Only real web URLs are valid company websites.
+             *
+             * GrowthZone member pages also contain tel:, mailto:, and other
+             * action links. URL() accepts those schemes, and because they have
+             * no hostname they previously looked "external" and could be
+             * returned as the website (for example tel:+19723932829).
+             */
+            if (
+                !["http:", "https:"].includes(url.protocol)
+            ) {
+                continue;
+            }
+
             if (
                 url.hostname !== sourceHost &&
                 !/(google\.com|facebook\.com|instagram\.com|linkedin\.com|growthzone\.com)/i
