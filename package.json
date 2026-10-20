@@ -9,13 +9,15 @@
     "daily": "node run_chamber_daily.js",
     "classify": "node chamber_classify.js",
     "digest": "node chamber_lead_digest.js",
-    "check": "node --check chamber_classify.js && node --check chamber_lead_digest.js && node --check run_chamber_daily.js && node --check lead_types.js"
+    "check": "node --check chamber_directory_ingest.js && node --check chamber_classify.js && node --check chamber_lead_digest.js && node --check run_chamber_daily.js && node --check lead_types.js",
+    "ingest": "node chamber_directory_ingest.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "cheerio": "^1.0.0"
   }
 }
