@@ -788,7 +788,30 @@ function phoneFromPage($) {
 }
 
 async function parseGrowthZoneMember(url, source) {
-    const page = await fetchText(url);
+    /*
+     * GrowthZone's normal member page can render "Visit Website" through
+     * client-side/action links instead of exposing the final company URL in a
+     * plain anchor. Its print mode renders a simpler server-side page with the
+     * real external website URL, which is much easier and safer to parse.
+     *
+     * Try print mode first, then fall back to the original detail page.
+     */
+    let page;
+
+    try {
+        const printUrl = new URL(url);
+        printUrl.searchParams.set("rendermode", "print");
+
+        page = await fetchText(printUrl.href);
+    } catch (error) {
+        console.warn(
+            `[chamber-ingest:${source.key}] Print view failed for ${url}: ` +
+            error.message,
+        );
+
+        page = await fetchText(url);
+    }
+
     const $ = cheerio.load(page.text);
 
     const companyName = growthZoneCompanyName($);
@@ -803,7 +826,7 @@ async function parseGrowthZoneMember(url, source) {
 
     return {
         source: source.key,
-        sourceUrl: page.finalUrl,
+        sourceUrl: url,
         companyName,
         contactName: growthZoneContactName($, companyName),
         phone: phoneFromPage($),
