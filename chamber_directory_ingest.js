@@ -61,6 +61,9 @@ const SOURCES =
 const MAX_INSERTS_PER_SOURCE =
     envInt("CHAMBER_INGEST_MAX_INSERTS_PER_SOURCE", 50);
 
+const MAX_ITEMS_PER_SOURCE =
+    envInt("CHAMBER_INGEST_MAX_ITEMS_PER_SOURCE", 0);
+
 const MAX_DIRECTORY_PAGES =
     envInt("CHAMBER_INGEST_MAX_DIRECTORY_PAGES", 100);
 
@@ -132,9 +135,29 @@ function cleanText(value) {
 function normalizeEmail(value) {
     const email = cleanText(value).toLowerCase();
 
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-        ? email
-        : null;
+    if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,24}$/.test(email)) {
+        return null;
+    }
+
+    const [localPart, domain] = email.split("@");
+
+    if (
+        !localPart ||
+        !domain ||
+        /\.(?:png|jpe?g|gif|svg|webp|ico|css|js|json|xml|woff2?|ttf)$/i.test(domain)
+    ) {
+        return null;
+    }
+
+    if (
+        /^x+$/i.test(localPart) ||
+        /^x+(?:\.x+)+$/i.test(domain) ||
+        /^(?:test|example|email|name)$/i.test(localPart)
+    ) {
+        return null;
+    }
+
+    return email;
 }
 
 function normalizePhone(value) {
@@ -263,6 +286,8 @@ const BLOCKED_EMAIL_DOMAINS = new Set([
     "friscochamber.com",
     "growthzone.com",
     "chamberpages.net",
+    "avada-company.com",
+    "example.com",
 ]);
 
 function extractEmails(html) {
@@ -277,9 +302,8 @@ function extractEmails(html) {
     });
 
     const matches =
-        $.root()
-            .text()
-            .match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+        String(html || "")
+            .match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,24}(?![A-Z])/gi) || [];
 
     candidates.push(...matches);
 
@@ -288,7 +312,13 @@ function extractEmails(html) {
         .filter(Boolean)
         .filter((email) => {
             const domain = email.split("@")[1];
-            return !BLOCKED_EMAIL_DOMAINS.has(domain);
+
+            return ![...BLOCKED_EMAIL_DOMAINS]
+                .some(
+                    (blocked) =>
+                        domain === blocked ||
+                        domain.endsWith(`.${blocked}`),
+                );
         });
 }
 
@@ -613,8 +643,8 @@ function externalWebsiteFromPage($, pageUrl) {
     const sourceHost = new URL(pageUrl).hostname;
     const candidates = [];
 
-    $('a[href^="http"]').each((_, element) => {
-        const href = $(element).attr("href");
+    $('a[href]').each((_, element) => {
+        const href = cleanText($(element).attr("href"));
         const label = cleanText($(element).text());
 
         if (href) {
@@ -628,7 +658,14 @@ function externalWebsiteFromPage($, pageUrl) {
 
     for (const item of [preferred, ...candidates].filter(Boolean)) {
         try {
-            const url = new URL(item.href, pageUrl);
+            const resolved =
+                absoluteUrl(item.href, pageUrl);
+
+            if (!resolved) {
+                continue;
+            }
+
+            const url = new URL(resolved);
 
             if (
                 url.hostname !== sourceHost &&
@@ -1168,6 +1205,18 @@ async function runSource(source) {
         index < items.length;
         index += 1
     ) {
+        if (
+            MAX_ITEMS_PER_SOURCE > 0 &&
+            index >= MAX_ITEMS_PER_SOURCE
+        ) {
+            console.log(
+                `[chamber-ingest:${source.key}] ` +
+                `Reached CHAMBER_INGEST_MAX_ITEMS_PER_SOURCE=` +
+                `${MAX_ITEMS_PER_SOURCE}`,
+            );
+            break;
+        }
+
         if (
             MAX_INSERTS_PER_SOURCE > 0 &&
             newCount >= MAX_INSERTS_PER_SOURCE
