@@ -132,10 +132,48 @@ function cleanText(value) {
         .trim();
 }
 
+const BLOCKED_EMAIL_DOMAINS = new Set([
+    "allenchamber.com",
+    "mckinneychamber.com",
+    "coppellchamber.org",
+    "friscochamber.com",
+    "growthzone.com",
+    "chamberpages.net",
+    "avada-company.com",
+    "example.com",
+    "example.org",
+    "example.net",
+    "mysite.com",
+    "sentry.io",
+    "sentry-next.wixpress.com",
+    "wixpress.com",
+    "group.calendar.google.com",
+    "clickwise.dev",
+    "keen.io",
+    "gist-apps.com",
+]);
+
+const BLOCKED_EXACT_EMAILS = new Set([
+    "user@domain.com",
+    "you@company.com",
+    "filler@godaddy.com",
+]);
+
+const COMMON_WEBMAIL_DOMAINS = new Set([
+    "gmail.com",
+    "yahoo.com",
+    "outlook.com",
+    "hotmail.com",
+    "icloud.com",
+    "aol.com",
+    "live.com",
+    "msn.com",
+]);
+
 function normalizeEmail(value) {
     const email = cleanText(value).toLowerCase();
 
-    if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,24}$/.test(email)) {
+    if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24}$/i.test(email)) {
         return null;
     }
 
@@ -150,9 +188,18 @@ function normalizeEmail(value) {
     }
 
     if (
+        BLOCKED_EXACT_EMAILS.has(email) ||
+        [...BLOCKED_EMAIL_DOMAINS].some(
+            (blocked) =>
+                domain === blocked ||
+                domain.endsWith(`.${blocked}`),
+        ) ||
         /^x+$/i.test(localPart) ||
         /^x+(?:\.x+)+$/i.test(domain) ||
-        /^(?:test|example|email|name)$/i.test(localPart)
+        /^(?:test|example|email|name|yourname|you)$/i.test(localPart) ||
+        /^(?:noreply|no-reply|privacy|privacyoffice|abuse|webmaster|unsubscribe)$/i.test(
+            localPart,
+        )
     ) {
         return null;
     }
@@ -168,6 +215,23 @@ function normalizePhone(value) {
     }
 
     return digits.slice(-10);
+}
+
+function looksLikeAddressOrLocation(value) {
+    const text = cleanText(value);
+
+    if (!text) {
+        return false;
+    }
+
+    return (
+        /^\d{1,6}\s+\S+/i.test(text) ||
+        /^(?:p\.?\s*o\.?|post office)\s+box\b/i.test(text) ||
+        /^[A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/i.test(text) ||
+        /\b(?:st|street|rd|road|dr|drive|ln|lane|blvd|boulevard|pkwy|parkway|ave|avenue|hwy|highway|ct|court|cir|circle|trl|trail)\.?$/i.test(
+            text,
+        )
+    );
 }
 
 function absoluteUrl(href, baseUrl) {
@@ -279,16 +343,6 @@ async function fetchText(url) {
  * Public email discovery
  * ----------------------------------------------------------------------- */
 
-const BLOCKED_EMAIL_DOMAINS = new Set([
-    "allenchamber.com",
-    "mckinneychamber.com",
-    "coppellchamber.org",
-    "friscochamber.com",
-    "growthzone.com",
-    "chamberpages.net",
-    "avada-company.com",
-    "example.com",
-]);
 
 function extractEmails(html) {
     const $ = cheerio.load(html);
@@ -330,11 +384,22 @@ function scoreEmail(email, website) {
         const websiteDomain =
             new URL(website).hostname.replace(/^www\./, "").toLowerCase();
 
-        if (
+        const sameWebsiteDomain =
             domain === websiteDomain ||
-            domain.endsWith(`.${websiteDomain}`)
-        ) {
+            domain.endsWith(`.${websiteDomain}`) ||
+            websiteDomain.endsWith(`.${domain}`);
+
+        if (sameWebsiteDomain) {
             score += 100;
+        } else if (COMMON_WEBMAIL_DOMAINS.has(domain)) {
+            score += 10;
+        } else {
+            /*
+             * Public pages often contain vendor, analytics, calendar,
+             * registrar, or parent-site addresses. Do not treat a random
+             * third-party domain as the member's contact email.
+             */
+            score -= 50;
         }
     } catch {
         // No website domain score.
@@ -342,10 +407,6 @@ function scoreEmail(email, website) {
 
     if (/^(info|contact|hello|office|sales|service|admin)$/i.test(local)) {
         score += 20;
-    }
-
-    if (/^(noreply|no-reply|privacy|abuse|webmaster)$/i.test(local)) {
-        score -= 1000;
     }
 
     return score;
@@ -416,7 +477,7 @@ async function findWebsiteEmail(website) {
             email,
             score: scoreEmail(email, home.finalUrl),
         }))
-        .filter((item) => item.score > -1000)
+        .filter((item) => item.score > 0)
         .sort((a, b) => b.score - a.score)[0]?.email || null;
 }
 
@@ -446,6 +507,8 @@ async function findExisting(record) {
                 (
                     $1::text IS NOT NULL
                     AND LOWER(BTRIM(email)) = $1
+                    AND LOWER(BTRIM(company_name)) =
+                        LOWER(BTRIM($3))
                 )
 
                 OR (
@@ -496,7 +559,7 @@ async function upsertRecord(record) {
 
     if (existing) {
         const materialCategoryChange =
-            cleanText(record.category) &&
+            Boolean(cleanText(record.category)) &&
             cleanText(existing.industry_guess).toLowerCase() !==
                 cleanText(record.category).toLowerCase();
 
@@ -1070,7 +1133,7 @@ function allenGuideRecords(html, source) {
             if (
                 !candidate ||
                 parseCity(candidate, null) ||
-                /^\d/.test(candidate) ||
+                looksLikeAddressOrLocation(candidate) ||
                 /^(suite|ste\.?|building|bldg\.?|unit|#)/i.test(candidate) ||
                 normalizePhone(candidate) ||
                 looksLikeWebsite(candidate)
