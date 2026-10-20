@@ -681,11 +681,37 @@ function externalWebsiteFromPage($, pageUrl) {
                 continue;
             }
 
-            if (
-                url.hostname !== sourceHost &&
-                !/(google\.com|facebook\.com|instagram\.com|linkedin\.com|growthzone\.com)/i
-                    .test(url.hostname)
-            ) {
+            const host = url.hostname.toLowerCase();
+
+            /*
+             * Ignore Chamber/navigation/social-share links.
+             *
+             * GrowthZone print views can include social share URLs alongside
+             * the actual member website. Those are not business websites and
+             * should never be used for public-email enrichment.
+             */
+            const blockedHost =
+                host === sourceHost.toLowerCase() ||
+                /(^|\.)google\.com$/i.test(host) ||
+                /(^|\.)facebook\.com$/i.test(host) ||
+                /(^|\.)instagram\.com$/i.test(host) ||
+                /(^|\.)linkedin\.com$/i.test(host) ||
+                /(^|\.)twitter\.com$/i.test(host) ||
+                /(^|\.)x\.com$/i.test(host) ||
+                /(^|\.)pinterest\.com$/i.test(host) ||
+                /(^|\.)youtube\.com$/i.test(host) ||
+                /(^|\.)youtu\.be$/i.test(host) ||
+                /(^|\.)tiktok\.com$/i.test(host) ||
+                /(^|\.)growthzone\.com$/i.test(host) ||
+                /(^|\.)chambermaster\.com$/i.test(host) ||
+                /(^|\.)mckinneychamber\.com$/i.test(host) ||
+                /(^|\.)coppellchamber\.org$/i.test(host);
+
+            const looksLikeShareLink =
+                /(?:^|\/)(?:share|sharer|intent)(?:\/|$)/i.test(url.pathname) ||
+                /(?:^|[?&])(?:url|u|text)=/i.test(url.search);
+
+            if (!blockedHost && !looksLikeShareLink) {
                 return url.href;
             }
         } catch {
